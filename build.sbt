@@ -1,8 +1,8 @@
-scalaVersion := "2.13.0-RC1"
+scalaVersion := "2.13.3"
 organization := "com.lihaoyi"
 name := "geny"
 version := "0.1.5"
-libraryDependencies += "com.lihaoyi" %% "utest" % "0.6.7" % "test"
+libraryDependencies += "com.lihaoyi" %% "utest" % "0.7.4" % "test"
 testFrameworks := Seq(new TestFramework("utest.runner.Framework"))
 Compile / unmanagedSourceDirectories += baseDirectory.value / "geny" / "src"
 Test / unmanagedSourceDirectories += baseDirectory.value / "geny" / "test" / "src"
