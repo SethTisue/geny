@@ -1,16 +1,29 @@
-Geny 0.1.6
+Geny 0.6.2
 ==========
 
 ```scala
-"com.lihaoyi" %% "geny" % "0.1.6"
-"com.lihaoyi" %%% "geny" % "0.1.6" // Scala.js / native
+"com.lihaoyi" %% "geny" % "0.6.2"
+"com.lihaoyi" %%% "geny" % "0.6.2" // Scala.js / native
 ```
-Provides the `geny.Generator[A]` data type, a Generator of elements of type `A`.
 
-`Generator` is basically the inverse of
-a `scala.Iterator`: instead of the core functionality being the pull-based
-`hasNext` and `next: T` methods, the core is based around the push-based
-`generate` method, which is similar to `foreach` with some tweaks.
+Geny is a small library that provides push-based versions of common standard
+library interfaces:
+
+- [geny.Generator[T]](#generator), a push-based version of `scala.Iterator[T]`
+- [geny.Writable](#writable), a push-based version of `java.io.InputStream`
+  - [geny.Readable](#readable), a pull-based subclass of `Writable`
+
+More background behind the `Writable` and `Readable` interface can be found in
+this blog post:
+
+- [Standardizing IO Interfaces for Scala Libraries](http://www.lihaoyi.com/post/StandardizingIOInterfacesforScalaLibraries.html)
+
+## Generator
+
+`Generator` is basically the inverse of a `scala.Iterator`: instead of the core
+functionality being the pull-based `hasNext` and `next: T` methods, the core is
+based around the push-based `generate` method, which is similar to `foreach`
+with some tweaks.
 
 Unlike a `scala.Iterator`, subclasses of `Generator` can guarantee any clean
 up logic is performed by placing it after the `generate` call is made. This is
@@ -22,15 +35,13 @@ is exhausted fail to close the files if the developer uses `.head` or `.take`
 to access the first few elements of the iterator, and never exhausts it.
 
 Although `geny.Generator` is not part of the normal collections hierarchy, the
-API i intentionally modelled after that of `scala.Iterator` and should be
+API is intentionally modelled after that of `scala.Iterator` and should be
 mostly drop-in, with conversion functions provided where you need to interact
 with APIs using the standard Scala collections.
 
 Geny is intentionally a tiny library with one file and zero dependencies,
 so you can depend on it (or even copy-paste it into your project) without
 fear of taking on unknown heavyweight dependencies.
-
-## Usage
 
 ### Construction
 The two simplest ways to construct a `Generator` are via the `Generator(...)`
@@ -208,8 +219,209 @@ The caller can then use normal collection operations on the returned
 always be properly opened when a terminal operation is called, the required
 operations performed, and properly closed when everything is done.
 
+## Writable
+
+`geny.Writable` is a minimal interface that can be implemented by any data type
+that writes binary output to a `java.io.OutputStream`:
+
+```scala
+trait Writable{
+  def writeBytesTo(out: OutputStream): Unit
+}
+```
+
+`Writable` allows for zero-friction zero-overhead streaming data exchange
+between these libraries, e.g. allowing you pass Scalatags `Frag`s directly
+`os.write`:
+
+```scala
+@ import $ivy.`com.lihaoyi::scalatags:0.8.0`, scalatags.Text.all._
+import $ivy.$                             , scalatags.Text.all._
+
+@ os.write(os.pwd / "hello.html", html(body(h1("Hello"), p("World!"))))
+
+@ os.read(os.pwd / "hello.html")
+res1: String = "<html><body><h1>Hello</h1><p>World!</p></body></html>"
+```
+
+Sending `ujson.Value`s directly to `requests.post`
+
+```scala
+@ requests.post("https://httpbin.org/post", data = ujson.Obj("hello" -> 1))
+
+@ res2.text
+res3: String = """{
+  "args": {},
+  "data": "{\"hello\":1}",
+  "files": {},
+  "form": {},
+...
+```
+
+Serialize Scala data types directly to disk:
+
+```scala
+@ os.write(os.pwd / "two.json", upickle.default.stream(Map((1, 2) -> (3, 4), (5, 6) -> (7, 8))))
+
+@ os.read(os.pwd / "two.json")
+res5: String = "[[[1,2],[3,4]],[[5,6],[7,8]]]"
+```
+ 
+Or streaming file uploads over HTTP:
+
+```scala
+@ requests.post("https://httpbin.org/post", data = os.read.stream(os.pwd / "two.json")).text
+res6: String = """{
+  "args": {},
+  "data": "[[[1,2],[3,4]],[[5,6],[7,8]]]",
+  "files": {},
+  "form": {},
+```
+
+All this data exchange happens efficiently in a streaming fashion, without
+unnecessarily buffering data in-memory.
+
+`geny.Writable` also allows an implementation to ensure cleanup code runs after
+all data has been written (e.g. closing file handles, free-ing managed
+resources) and is much easier to implement than `java.io.InputStream`.
+
+Writable has implicit constructors from the following types:
+
+- `String`
+- `Array[Byte]`
+- `java.io.InputStream`
+
+And implemented by the following libraries:
+
+- [uPickle](https://github.com/lihaoyi/upickle): implemented by `ujson.Value`,
+  `upack.Msg`, and can be constructed from JSON-serializable data structures via
+  `upickle.default.stream` or `upickle.default.writableBinary`
+
+- [Scalatags](https://github.com/lihaoyi/scalatags): implemented by `scalatags.Text.Tag`
+
+- [Requests-Scala](https://github.com/lihaoyi/requests-scala):
+  `requests.get.stream(...)` methods return a [Readable](#readable) subtype of
+  `Writable`
+
+- [OS-Lib](https://github.com/lihaoyi/os-lib): `os.read.stream` returns a
+  [Readable](#readable) subtype of `Writable`
+
+- [Cask](https://github.com/lihaoyi/cask): `cask.Request` returns a
+  [Readable](#readable) subtype of `Writable`
+
+And is accepted by the following libraries:
+
+- [Requests-Scala](https://github.com/lihaoyi/requests-scala) takes `Writable` in the 
+  `data =` field of `requests.post` and `requests.put`
+
+- [OS-Lib](https://github.com/lihaoyi/os-lib) accepts a `Writable` in `os.write` and
+  the `stdin` parameter of `subprocess.call` or `subprocess.spawn`
+
+- [Cask](https://github.com/lihaoyi/cask): supports returning a `Writable`
+  from any Cask endpoint
+
+Any data type that writes bytes out to a `java.io.OutputStream`,
+`java.io.Writer`, or `StringBuilder` can be trivially made to implement
+`Writable`, which allows it to output data in a streaming fashion without
+needing to buffer it in memory. You can also implement `Writable`s in your own
+datatypes or accept it in your own method, if you want to inter-operate with
+this existing ecosystem of libraries.
+
+### Readable
+
+```scala
+trait Readable extends Writable{
+  def readBytesThrough[T](f: InputStream => T): T
+  def writeBytesTo(out: OutputStream): Unit = readBytesThrough(Internal.transfer(_, out))
+}
+````
+
+`Readable` is a subtype of [Writable](#writable) that provides an additional
+guarantee: not only can it be written to an `java.io.OutputStream`, it can also
+be read from by providing a `java.io.InputStream`. Note that the `InputStream`
+is scoped and only available within the `readBytesThrough` callback: after that
+the `InputStream` will be closed and associated resources (HTTP connections,
+file handles, etc.) will be released.
+
+`Readable` is supported by the following built in types:
+
+- `String`
+- `Array[Byte]`
+- `java.io.InputStream`
+
+Implemented by the following libraries
+
+- [Requests-Scala](https://github.com/lihaoyi/requests-scala):
+  `requests.get.stream(...)` methods return a `Readable`
+
+- [OS-Lib](https://github.com/lihaoyi/os-lib): `os.read.stream` returns a
+  `Readable`
+
+- [Cask](https://github.com/lihaoyi/cask): `cask.Request` implements `Readable`
+  to allow streaming of request data
+
+And is accepted by the following libraries:
+
+- [uPickle](https://github.com/lihaoyi/upickle): `upickle.default.read`,
+  `upickle.default.readBinary`, `ujson.read`, and `upack.read` all support
+  `Readable`
+
+- [FastParse](https://github.com/lihaoyi/os-lib): `fastparse.parse` accepts
+  parsing streaming input from any `Readable`
+
+`Readable` can be used to allow handling of streaming input, e.g. parsing JSON
+directly from a file or HTTP request, without needing to buffer the whole file
+in memory:
+
+```scala
+@ val data = ujson.read(requests.get.stream("https://api.github.com/events"))
+data: ujson.Value.Value = Arr(
+  ArrayBuffer(
+    Obj(
+      LinkedHashMap(
+        "id" -> Str("11169088214"),
+        "type" -> Str("PushEvent"),
+        "actor" -> Obj(
+...
+```
+
+You can also implement `Readable` in your own data types, to allow them to be
+seamlessly passed into uPickle or FastParse to be parsed in a streaming fashion.
+
+Note that in exchange for the reduced memory usage, parsing streaming data via
+`Readable` in uPickle or FastParse typically comes with a 20-40% CPU performance
+penalty over parsing data already in memory, due to the additional book-keeping
+necessary with streaming data. Whether it is worthwhile or not depends on your
+particular usage pattern.
+
 Changelog
 =========
+
+0.6.2
+-----
+
+- Improve performance of writing small strings via `StringWritable`
+
+0.5.0
+-----
+
+- Improve streaming of `InputStream`s to `OutputStream`s by dynamically sizing
+  the transfer buffer.
+
+0.4.2
+-----
+
+- Standardize `geny.Readable` as well
+
+0.2.0
+-----
+
+- Added [geny.Writable](#writable) interface
+
+0.1.8
+-----
+
+- Support for Scala 2.13.0 final
 
 0.1.6
 -----
